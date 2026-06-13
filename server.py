@@ -958,11 +958,23 @@ def run_image_to_video_job(job_id, model, aspect_ratio, aspect_select, vertical_
                         launch_opts["proxy"] = {"server": f"http://{use_proxy}"}
                         
                     browser = p.chromium.launch(**launch_opts)
+                    # Create a recording directory specifically for this job
+                    record_dir = os.path.join(UPLOADS_DIR, f"record-{job_id}")
+                    os.makedirs(record_dir, exist_ok=True)
+                    
                     context = browser.new_context(
-                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        record_video_dir=record_dir,
+                        record_video_size={'width': 1280, 'height': 720}
                     )
                     page = context.new_page()
                     
+                    # Update job with live status of recording
+                    with jobs_lock:
+                        if job_id in jobs:
+                            jobs[job_id]['live_stream'] = True
+                            # We'll set the actual path once recording is done, but for now mark it
+                            
                     update_job_progress(job_id, 'Navigating to Photo-to-Video Generator...')
                     page.goto('https://veoaifree.com/photo-and-image-to-video-generator/', timeout=60000, wait_until='domcontentloaded')
                     
@@ -970,6 +982,20 @@ def run_image_to_video_job(job_id, model, aspect_ratio, aspect_select, vertical_
                         
                     run_image_to_video_job_guts(page, job_id, model, aspect_ratio, aspect_select, vertical_pos, horizontal_pos, prompt, image_path)
                     
+                    # After completion, find the video file and move it to a clean path
+                    context.close() # Close context to finalize video
+                    video_file = page.video.path()
+                    if video_file and os.path.exists(video_file):
+                        live_video_filename = f"live-{job_id}.webm"
+                        live_video_path = os.path.join(UPLOADS_DIR, live_video_filename)
+                        import shutil
+                        shutil.move(video_file, live_video_path)
+                        with jobs_lock:
+                            if job_id in jobs:
+                                jobs[job_id]['live_video_url'] = f"/uploads/{live_video_filename}"
+                        # Cleanup the temp record dir
+                        shutil.rmtree(record_dir, ignore_errors=True)
+
                     successful = True
                     break # Success! Break retry loop
 
