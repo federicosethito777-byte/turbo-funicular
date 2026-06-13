@@ -38,6 +38,8 @@ import shutil
 import threading
 import requests
 import base64
+from PIL import Image
+from io import BytesIO
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from pyngrok import ngrok
@@ -1591,6 +1593,18 @@ def generate_img_to_video():
         try:
             unique_name = f"input-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
             image_path = None
+            
+            # Helper to convert to PNG and save
+            def save_as_png(data_bytes):
+                img = Image.open(BytesIO(data_bytes))
+                # Convert to RGB if necessary (e.g., if JPEG)
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGBA")
+                else:
+                    img = img.convert("RGB")
+                path = os.path.join(UPLOADS_DIR, f"{unique_name}.png")
+                img.save(path, "PNG")
+                return path
 
             if image_data.startswith("data:"):
                 # Handle Base64 Data URI
@@ -1598,54 +1612,23 @@ def generate_img_to_video():
                     header, base64_data = image_data.split(",", 1)
                 except ValueError:
                     return jsonify({'error': 'Invalid base64 Data URI format. Missing comma separator.'}), 400
-
-                ext = ".png"
-                if "image/jpeg" in header or "image/jpg" in header:
-                    ext = ".jpg"
-                elif "image/webp" in header:
-                    ext = ".webp"
-                elif "image/gif" in header:
-                    ext = ".gif"
-
                 file_bytes = base64.b64decode(base64_data)
-                image_path = os.path.join(UPLOADS_DIR, f"{unique_name}{ext}")
-                with open(image_path, 'wb') as f:
-                    f.write(file_bytes)
+                image_path = save_as_png(file_bytes)
+                
             elif not image_data.startswith("http://") and not image_data.startswith("https://") and len(image_data) > 100:
                 # Handle raw base64 string
                 file_bytes = base64.b64decode(image_data)
-                ext = ".png"
-                if file_bytes.startswith(b'\xff\xd8\xff'):
-                    ext = ".jpg"
-                elif file_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
-                    ext = ".png"
-                elif file_bytes.startswith(b'RIFF') and b'WEBP' in file_bytes[:12]:
-                    ext = ".webp"
-
-                image_path = os.path.join(UPLOADS_DIR, f"{unique_name}{ext}")
-                with open(image_path, 'wb') as f:
-                    f.write(file_bytes)
+                image_path = save_as_png(file_bytes)
+                
             else:
                 # Handle HTTP(S) url
                 resp = requests.get(image_data, timeout=30)
                 if resp.status_code != 200:
                     return jsonify({'error': f'Failed to fetch image from URL, status code: {resp.status_code}'}), 400
-
-                ext = ".png"
-                content_type = resp.headers.get('content-type', '').lower()
-                if 'jpeg' in content_type or 'jpg' in content_type:
-                    ext = ".jpg"
-                elif 'webp' in content_type:
-                    ext = ".webp"
-                elif 'gif' in content_type:
-                    ext = ".gif"
-
-                image_path = os.path.join(UPLOADS_DIR, f"{unique_name}{ext}")
-                with open(image_path, 'wb') as f:
-                    f.write(resp.content)
+                image_path = save_as_png(resp.content)
 
         except Exception as e:
-            return jsonify({'error': f'Failed to process or decode image input. Details: {str(e)}'}), 400
+            return jsonify({'error': f'Failed to process or convert image input to PNG. Details: {str(e)}'}), 400
 
     else:
         # Standard web multipart/form-data file upload (used by React app)
