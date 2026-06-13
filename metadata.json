@@ -1,0 +1,6 @@
+{
+  "name": "BautiAI",
+  "description": "An automated AI video generation platform powered by Grok and Google VEO engines with browser automation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

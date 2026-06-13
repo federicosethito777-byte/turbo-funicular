@@ -1,0 +1,27 @@
+# Render Blueprint Specification for easy automated deployment
+# Reference: https://render.com/docs/yaml-spec
+services:
+  - type: web
+    name: grok-video-generator
+    runtime: docker
+    plan: starter # Starter plan or higher is recommended to ensure enough RAM (512MB+) for Playwright headless Chromium.
+    region: oregon # Render's standard high-performance region
+    envVars:
+      # Render dynamically overrides the PORT variable and maps traffic to it
+      - key: PORT
+        value: "3000"
+
+      # Optional NVIDIA API Key for GPU-driven enhancements if enabled in your pipeline
+      - key: NVIDIA_API_KEY
+        sync: false # Fill in the Render Dashboard
+
+      # Optional Ngrok token for tunneling backends (not strictly required inside direct Render networks)
+      - key: NGROK_AUTH_TOKEN
+        sync: false # Fill in the Render Dashboard
+
+    # Set up disk mount if you want persistent storage for generated videos across redeployments
+    # Uncomment the following lines if you want high durability, though local temporary file system works for initial run.
+    # disk:
+    #   name: uploads-cache
+    #   mountPath: /app/uploads
+    #   sizeGB: 1
