@@ -15,6 +15,12 @@ export default function ImageToVideoTab() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Loading & status
+  const [loading, setLoading] = useState<boolean>(false);
+  const [currentJob, setCurrentJob] = useState<JobStatus | null>(null);
+  const [enhancing, setEnhancing] = useState<boolean>(false);
+  const [enhanceError, setEnhanceError] = useState<string | null>(null);
+
   // Auto-click logic
   useEffect(() => {
     if (verticalPos !== '' && horizontalPos !== '' && selectedFile && prompt.trim() && !loading) {
@@ -27,12 +33,6 @@ export default function ImageToVideoTab() {
       return () => clearTimeout(timer);
     }
   }, [verticalPos, horizontalPos, selectedFile, prompt, loading]);
-
-  // Loading & status
-  const [loading, setLoading] = useState<boolean>(false);
-  const [currentJob, setCurrentJob] = useState<JobStatus | null>(null);
-  const [enhancing, setEnhancing] = useState<boolean>(false);
-  const [enhanceError, setEnhanceError] = useState<string | null>(null);
 
   const handleEnhancePrompt = async () => {
     if (!prompt.trim()) {
