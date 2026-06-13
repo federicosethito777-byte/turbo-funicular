@@ -56,6 +56,33 @@ JOBS_STORAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'jo
 jobs_lock = threading.Lock()
 jobs = {}
 
+# Global Ad-Blocking Domains
+AD_BLOCK_LIST = [
+    "google-analytics.com", "googletagmanager.com", "googlesyndication.com", 
+    "googleadservices.com", "doubleclick.net", "adnxs.com", "ads-twitter.com",
+    "facebook.net", "facebook.com/tr", "adservice.google", "analytics.google.com",
+    "criteo.com", "outbrain.com", "taboola.com", "hotjar.com", "clarity.ms",
+    "pixel.wp.com", "quantserve.com", "scorecardresearch.com", "amazon-adsystem.com",
+    "adnxs.com", "casalemedia.com", "rubiconproject.com", "pubmatic.com", "openx.net",
+    "mads.amazon-adsystem.com", "ads-api.twitter.com", "ads.linkedin.com",
+    "ads.youtube.com", "ad-delivery.net", "adform.net", "adskeeper.co.uk",
+    "adtech.de", "advertising.com", "aflow.gtm.google", "alocav.com",
+    "and-here-we-go.com", "any-ads.com", "app-measurement.com", "application-analytics.com"
+]
+
+def apply_ad_block(page):
+    """Interception function to abort ad-related requests"""
+    def intercept_route(route):
+        url = route.request.url.lower()
+        if any(domain in url for domain in AD_BLOCK_LIST):
+            # print(f"[AdBlock] Aborting: {url}")
+            route.abort()
+        else:
+            route.continue_()
+    
+    # Apply to all requests
+    page.route("**/*", intercept_route)
+
 def save_jobs_to_file():
     try:
         with jobs_lock:
@@ -752,6 +779,9 @@ def run_text_to_video_job(job_id, model, aspect_ratio, prompt):
                     )
                     page = context.new_page()
                     
+                    # Apply ad-blocking to prevent interference
+                    apply_ad_block(page)
+                    
                     update_job_progress(job_id, 'Navigating to Grok Video Generator...')
                     page.goto('https://veoaifree.com/grok-ai-video-generator/', timeout=60000, wait_until='domcontentloaded')
                     
@@ -968,6 +998,9 @@ def run_image_to_video_job(job_id, model, aspect_ratio, aspect_select, vertical_
                         record_video_size={'width': 1280, 'height': 720}
                     )
                     page = context.new_page()
+                    
+                    # Apply ad-blocking to prevent interference
+                    apply_ad_block(page)
                     
                     # Update job with live status of recording
                     with jobs_lock:
