@@ -552,43 +552,43 @@ def handle_crop_modal(page, job_id, aspect_select=None):
             # Look for button with text "Crop", "Confirm", "OK", "Apply", "Save", "Cut", "Done" or class containing "crop" or ID containing "crop"
             target_button_selector = None
             
-            # First try finding any visible button whose text or ID has "crop"
+            # ABSOLUTE PRIORITY: Check for #upload-btn first
             for btn in buttons_info:
-                text_lower = btn['text'].lower()
-                id_lower = btn['id'].lower() if btn['id'] else ''
-                cls_lower = btn['className'].lower() if btn['className'] else ''
-                if btn['visible']:
-                    if 'crop' in text_lower or 'crop' in id_lower or 'crop' in cls_lower:
-                        if btn['id']:
-                            target_button_selector = f"#{btn['id']}"
-                            break
-                        elif btn['className']:
-                            # Safe split to build classes
-                            classes = ".".join([c for c in btn['className'].split() if c and ":" not in c])
-                            if classes:
-                                target_button_selector = f"button.{classes}, a.{classes}, div.{classes}, span.{classes}"
-                                break
+                if btn['id'] == 'upload-btn' and btn['visible']:
+                    target_button_selector = '#upload-btn'
+                    break
             
-            # Second try: any button containing upload, confirm, apply, save, ok, done, choose, select
+            # First try finding any visible button whose text or ID has "crop"
             if not target_button_selector:
-                # Prioritize #upload-btn as mentioned by the user
                 for btn in buttons_info:
-                    if btn['id'] == 'upload-btn' and btn['visible']:
-                        target_button_selector = '#upload-btn'
-                        break
-                
-                if not target_button_selector:
-                    for btn in buttons_info:
-                        text_lower = btn['text'].lower()
-                        if btn['visible'] and any(word in text_lower for word in ['upload', 'confirm', 'apply', 'save', 'ok', 'done', 'choose', 'select']):
+                    text_lower = btn['text'].lower()
+                    id_lower = btn['id'].lower() if btn['id'] else ''
+                    cls_lower = btn['className'].lower() if btn['className'] else ''
+                    if btn['visible']:
+                        if 'crop' in text_lower or 'crop' in id_lower or 'crop' in cls_lower:
                             if btn['id']:
                                 target_button_selector = f"#{btn['id']}"
                                 break
                             elif btn['className']:
+                                # Safe split to build classes
                                 classes = ".".join([c for c in btn['className'].split() if c and ":" not in c])
                                 if classes:
                                     target_button_selector = f"button.{classes}, a.{classes}, div.{classes}, span.{classes}"
                                     break
+            
+            # Second try: any button containing upload, confirm, apply, save, ok, done, choose, select
+            if not target_button_selector:
+                for btn in buttons_info:
+                    text_lower = btn['text'].lower()
+                    if btn['visible'] and any(word in text_lower for word in ['upload', 'confirm', 'apply', 'save', 'ok', 'done', 'choose', 'select']):
+                        if btn['id']:
+                            target_button_selector = f"#{btn['id']}"
+                            break
+                        elif btn['className']:
+                            classes = ".".join([c for c in btn['className'].split() if c and ":" not in c])
+                            if classes:
+                                target_button_selector = f"button.{classes}, a.{classes}, div.{classes}, span.{classes}"
+                                break
                         
             # Third try: click by text or ID like #cropBtn or #upload-btn
             if not target_button_selector:
