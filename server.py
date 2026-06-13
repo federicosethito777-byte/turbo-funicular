@@ -513,13 +513,16 @@ def handle_crop_modal(page, job_id, aspect_select=None):
         # 1. Set aspect ratio if provided and present
         if aspect_select:
             try:
-                for sel in ['#aspectSelect', '#aspect-ratio-select', '#crop-aspect', '#modal-aspect']:
+                # Target select elements directly
+                for sel in ['select', '#aspectSelect', '#aspect-ratio-select', '#crop-aspect', '#modal-aspect']:
                     if page.locator(sel).count() > 0:
                         try:
+                            # Try to match by option value
                             page.select_option(sel, aspect_select, timeout=1000)
-                            update_job_progress(job_id, f"Aspect ratio set inside modal: {aspect_select}")
+                            update_job_progress(job_id, f"Aspect ratio set inside modal using {sel}: {aspect_select}")
                             break
                         except Exception:
+                            # Fallback to JS if direct select fails
                             page.evaluate('([s, v]) => { const el = document.querySelector(s); if(el) { el.value = v; el.dispatchEvent(new Event("change", { bubbles: true })); } }', [sel, aspect_select])
                             update_job_progress(job_id, f"Aspect ratio set inside modal via fallback: {aspect_select}")
                             break
@@ -533,10 +536,7 @@ def handle_crop_modal(page, job_id, aspect_select=None):
                 if (!modal) return [];
                 return Array.from(modal.querySelectorAll('button, a, input[type="button"], [role="button"], span, div')).map(el => {
                     const text = el.innerText ? el.innerText.trim() : (el.value ? el.value.trim() : '');
-                    const textLower = text.toLowerCase();
-                    const idLower = el.id ? el.id.toLowerCase() : '';
-                    const clsLower = el.className ? el.className.toLowerCase() : '';
-                    const isCandidate = textLower.includes('crop') || textLower.includes('confirm') || textLower.includes('ok') || textLower.includes('apply') || textLower.includes('save') || textLower.includes('done') || idLower.includes('crop') || clsLower.includes('crop') || idLower.includes('confirm') || clsLower.includes('confirm');
+                    const isCandidate = el.id === 'uploadBtn' || text.toLowerCase().includes('upload') || text.toLowerCase().includes('crop') || text.toLowerCase().includes('confirm');
                     if (!isCandidate && el.tagName !== 'BUTTON' && el.tagName !== 'A') return null;
                     return {
                         id: el.id,
@@ -549,38 +549,18 @@ def handle_crop_modal(page, job_id, aspect_select=None):
             }''', active_modal_selector)
             print(f"[Modal] Found buttons: {buttons_info}")
             
-            # Look for button with text "Crop", "Confirm", "OK", "Apply", "Save", "Cut", "Done" or class containing "crop" or ID containing "crop"
+            # ABSOLUTE PRIORITY: Check for #uploadBtn first (user-specified)
             target_button_selector = None
-            
-            # ABSOLUTE PRIORITY: Check for #upload-btn first
             for btn in buttons_info:
-                if btn['id'] == 'upload-btn' and btn['visible']:
-                    target_button_selector = '#upload-btn'
+                if btn['id'] == 'uploadBtn' and btn['visible']:
+                    target_button_selector = '#uploadBtn'
                     break
             
-            # First try finding any visible button whose text or ID has "crop"
+            # Fallback to general keyword search if #uploadBtn not found or not visible
             if not target_button_selector:
                 for btn in buttons_info:
                     text_lower = btn['text'].lower()
-                    id_lower = btn['id'].lower() if btn['id'] else ''
-                    cls_lower = btn['className'].lower() if btn['className'] else ''
-                    if btn['visible']:
-                        if 'crop' in text_lower or 'crop' in id_lower or 'crop' in cls_lower:
-                            if btn['id']:
-                                target_button_selector = f"#{btn['id']}"
-                                break
-                            elif btn['className']:
-                                # Safe split to build classes
-                                classes = ".".join([c for c in btn['className'].split() if c and ":" not in c])
-                                if classes:
-                                    target_button_selector = f"button.{classes}, a.{classes}, div.{classes}, span.{classes}"
-                                    break
-            
-            # Second try: any button containing upload, confirm, apply, save, ok, done, choose, select
-            if not target_button_selector:
-                for btn in buttons_info:
-                    text_lower = btn['text'].lower()
-                    if btn['visible'] and any(word in text_lower for word in ['upload', 'confirm', 'apply', 'save', 'ok', 'done', 'choose', 'select']):
+                    if btn['visible'] and any(word in text_lower for word in ['upload', 'confirm', 'apply', 'save', 'ok']):
                         if btn['id']:
                             target_button_selector = f"#{btn['id']}"
                             break
