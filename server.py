@@ -453,44 +453,54 @@ def dismiss_popup_if_needed(page):
 
 def handle_crop_modal(page, job_id, aspect_select=None):
     # Wait up to 10 seconds for crop modal to show up to account for potential slower proxy/renders
-    update_job_progress(job_id, 'Waiting for potential crop modal to appear...')
-    modal_visible = False
+    update_job_progress(job_id, 'Waiting for potential post-upload modal to appear...')
+    active_modal_selector = None
     for _ in range(20):
         try:
-            modal_visible = page.evaluate('''() => {
-                const modal = document.querySelector('#cropModal');
-                if (modal) {
-                    const style = window.getComputedStyle(modal);
-                    return style.display !== 'none' && style.visibility !== 'hidden' && modal.classList.contains('show');
+            active_modal_selector = page.evaluate('''() => {
+                const selectors = ['#cropModal', '.modal', '.popup', '[class*="modal"]', '[id*="modal"]', '[role="dialog"]'];
+                for (const sel of selectors) {
+                    const elements = document.querySelectorAll(sel);
+                    for (const el of elements) {
+                        const style = window.getComputedStyle(el);
+                        // Check if it's visible and actually contains some content
+                        if (style.display !== 'none' && style.visibility !== 'hidden' && el.offsetHeight > 50) {
+                            // If it's a generic class modal, we might need a more specific way to target it
+                            return sel; 
+                        }
+                    }
                 }
-                return false;
+                return null;
             }''')
-            if modal_visible:
+            if active_modal_selector:
                 break
         except Exception:
             pass
         time.sleep(0.5)
 
-    if modal_visible:
-        update_job_progress(job_id, 'Crop modal detected. Adjusting and auto-confirming...')
+    if active_modal_selector:
+        update_job_progress(job_id, f'Modal detected via {active_modal_selector}. Adjusting and auto-confirming...')
         
-        # 1. Set #aspectSelect if provided and present
+        # 1. Set aspect ratio if provided and present
         if aspect_select:
             try:
-                if page.locator('#aspectSelect').count() > 0:
-                    try:
-                        page.select_option('#aspectSelect', aspect_select, timeout=1000)
-                        update_job_progress(job_id, f"Aspect ratio set inside crop modal: {aspect_select}")
-                    except Exception:
-                        page.evaluate('([sel, val]) => { const el = document.querySelector(sel); if(el) { el.value = val; el.dispatchEvent(new Event("change", { bubbles: true })); } }', ['#aspectSelect', aspect_select])
-                        update_job_progress(job_id, f"Aspect ratio set inside crop modal via fallback: {aspect_select}")
+                for sel in ['#aspectSelect', '#aspect-ratio-select', '#crop-aspect', '#modal-aspect']:
+                    if page.locator(sel).count() > 0:
+                        try:
+                            page.select_option(sel, aspect_select, timeout=1000)
+                            update_job_progress(job_id, f"Aspect ratio set inside modal: {aspect_select}")
+                            break
+                        except Exception:
+                            page.evaluate('([s, v]) => { const el = document.querySelector(s); if(el) { el.value = v; el.dispatchEvent(new Event("change", { bubbles: true })); } }', [sel, aspect_select])
+                            update_job_progress(job_id, f"Aspect ratio set inside modal via fallback: {aspect_select}")
+                            break
             except Exception as e:
-                print(f"[CropModal] Error setting aspect select: {e}")
+                print(f"[Modal] Error setting aspect select: {e}")
 
-        # Let's inspect buttons inside cropModal
+        # Let's inspect buttons inside the detected modal
         try:
-            buttons_info = page.evaluate('''() => {
-                const modal = document.querySelector('#cropModal');
+            buttons_info = page.evaluate('''(sel) => {
+                const modal = document.querySelector(sel);
                 if (!modal) return [];
                 return Array.from(modal.querySelectorAll('button, a, input[type="button"], [role="button"], span, div')).map(el => {
                     const text = el.innerText ? el.innerText.trim() : (el.value ? el.value.trim() : '');
@@ -507,8 +517,8 @@ def handle_crop_modal(page, job_id, aspect_select=None):
                         visible: el.offsetWidth > 0 || el.offsetHeight > 0 || window.getComputedStyle(el).display !== 'none'
                     };
                 }).filter(Boolean);
-            }''')
-            print(f"[CropModal] Found buttons: {buttons_info}")
+            }''', active_modal_selector)
+            print(f"[Modal] Found buttons: {buttons_info}")
             
             # Look for button with text "Crop", "Confirm", "OK", "Apply", "Save", "Cut", "Done" or class containing "crop" or ID containing "crop"
             target_button_selector = None
@@ -530,24 +540,33 @@ def handle_crop_modal(page, job_id, aspect_select=None):
                                 target_button_selector = f"button.{classes}, a.{classes}, div.{classes}, span.{classes}"
                                 break
             
-            # Second try: any button containing save, apply, ok, confirm, done
+            # Second try: any button containing upload, confirm, apply, save, ok, done, choose, select
             if not target_button_selector:
+                # Prioritize #upload-btn as mentioned by the user
                 for btn in buttons_info:
-                    text_lower = btn['text'].lower()
-                    if btn['visible'] and any(word in text_lower for word in ['confirm', 'apply', 'save', 'ok', 'done', 'choose', 'select']):
-                        if btn['id']:
-                            target_button_selector = f"#{btn['id']}"
-                            break
-                        elif btn['className']:
-                            classes = ".".join([c for c in btn['className'].split() if c and ":" not in c])
-                            if classes:
-                                target_button_selector = f"button.{classes}, a.{classes}, div.{classes}, span.{classes}"
+                    if btn['id'] == 'upload-btn' and btn['visible']:
+                        target_button_selector = '#upload-btn'
+                        break
+                
+                if not target_button_selector:
+                    for btn in buttons_info:
+                        text_lower = btn['text'].lower()
+                        if btn['visible'] and any(word in text_lower for word in ['upload', 'confirm', 'apply', 'save', 'ok', 'done', 'choose', 'select']):
+                            if btn['id']:
+                                target_button_selector = f"#{btn['id']}"
                                 break
+                            elif btn['className']:
+                                classes = ".".join([c for c in btn['className'].split() if c and ":" not in c])
+                                if classes:
+                                    target_button_selector = f"button.{classes}, a.{classes}, div.{classes}, span.{classes}"
+                                    break
                         
-            # Third try: click by text or ID like #cropBtn
+            # Third try: click by text or ID like #cropBtn or #upload-btn
             if not target_button_selector:
                 try:
-                    if page.locator('#cropBtn').count() > 0:
+                    if page.locator('#upload-btn').count() > 0:
+                        target_button_selector = '#upload-btn'
+                    elif page.locator('#cropBtn').count() > 0:
                         target_button_selector = '#cropBtn'
                     elif page.locator('#crop_it').count() > 0:
                         target_button_selector = '#crop_it'
@@ -575,8 +594,8 @@ def handle_crop_modal(page, job_id, aspect_select=None):
                         pass
             else:
                 # Let's try executing JavaScript click as fallback on any promising element
-                clicked_via_js = page.evaluate('''() => {
-                    const modal = document.querySelector('#cropModal');
+                clicked_via_js = page.evaluate('''(sel) => {
+                    const modal = document.querySelector(sel);
                     if (!modal) return false;
                     const btns = Array.from(modal.querySelectorAll('button, a, input[type="button"], div, span'));
                     // Look for best match
@@ -602,36 +621,36 @@ def handle_crop_modal(page, job_id, aspect_select=None):
                         return true;
                     }
                     return false;
-                }''')
-                update_job_progress(job_id, f"Fallback JS crop button click status: {clicked_via_js}")
+                }''', active_modal_selector)
+                update_job_progress(job_id, f"Fallback JS confirmation button click status: {clicked_via_js}")
                 
             # Wait up to 5 seconds for the modal to close/disappear with active click retries
             modal_still_open = True
             for attempt in range(12):
-                still_open = page.evaluate('''() => {
-                    const modal = document.querySelector('#cropModal');
+                still_open = page.evaluate('''(sel) => {
+                    const modal = document.querySelector(sel);
                     if (modal) {
                         const style = window.getComputedStyle(modal);
-                        return style.display !== 'none' && style.visibility !== 'hidden' && modal.classList.contains('show');
+                        return style.display !== 'none' && style.visibility !== 'hidden' && modal.offsetHeight > 50;
                     }
                     return false;
-                }''')
+                }''', active_modal_selector)
                 if not still_open:
-                    update_job_progress(job_id, 'Crop modal closed successfully.')
+                    update_job_progress(job_id, 'Modal closed successfully.')
                     modal_still_open = False
                     break
                 
                 # Active re-clicks if modal is taking too long
                 if attempt > 2 and target_button_selector:
-                    print(f"[CropModal] Still open (attempt {attempt}). Re-clicking selector: {target_button_selector}")
+                    print(f"[Modal] Still open (attempt {attempt}). Re-clicking selector: {target_button_selector}")
                     try:
                         page.locator(target_button_selector).first.click(force=True, timeout=2000)
                     except Exception:
                         pass
                 elif attempt > 2:
-                    print(f"[CropModal] Still open (attempt {attempt}). Re-clicking via JS...")
-                    page.evaluate('''() => {
-                        const modal = document.querySelector('#cropModal');
+                    print(f"[Modal] Still open (attempt {attempt}). Re-clicking via JS...")
+                    page.evaluate('''(sel) => {
+                        const modal = document.querySelector(sel);
                         if (!modal) return;
                         const btns = Array.from(modal.querySelectorAll('button, a, input[type="button"], div, span'));
                         let target = btns.find(b => {
@@ -647,15 +666,15 @@ def handle_crop_modal(page, job_id, aspect_select=None):
                         if (target) {
                             target.click();
                         }
-                    }''')
+                    }''', active_modal_selector)
                 time.sleep(0.5)
 
             # Ultimate safe fallback: If modal is still open, forcefully close it to prevent blocking pointer events
             if modal_still_open:
-                update_job_progress(job_id, 'Crop modal remains open. Force shielding backdrop and hiding modal...')
-                page.evaluate('''() => {
+                update_job_progress(job_id, 'Modal remains open. Force shielding backdrop and hiding modal...')
+                page.evaluate('''(sel) => {
                     try {
-                        const modal = document.querySelector('#cropModal');
+                        const modal = document.querySelector(sel);
                         if (modal) {
                             // Click confirmation button one more time via JS
                             const btns = Array.from(modal.querySelectorAll('button, a, input[type="button"], div, span'));
@@ -684,9 +703,9 @@ def handle_crop_modal(page, job_id, aspect_select=None):
                         document.documentElement.style.overflow = 'auto';
                         document.documentElement.style.pointerEvents = 'auto';
                     } catch(e) {
-                        console.error("[CropModal Force Close Error]:", e);
+                        console.error("[Modal Force Close Error]:", e);
                     }
-                }''')
+                }''', active_modal_selector)
                 time.sleep(1)
 
         except Exception as crop_err:
@@ -1081,13 +1100,28 @@ def run_image_to_video_job_guts(page, job_id, model, aspect_ratio, aspect_select
     page.wait_for_timeout(1000)
 
     # Try set_input_files with force=True on all file inputs
-    file_inputs = page.locator('input[type="file"]').all()
-    print(f"[Upload Debug] Playwright found {len(file_inputs)} file inputs")
+    all_inputs = page.locator('input[type="file"]').all()
+    print(f"[Upload Debug] Playwright found {len(all_inputs)} file inputs")
+    
+    # Prioritize inputs that are visible or have 'image' in their accept attribute
+    file_inputs = []
+    for inp in all_inputs:
+        try:
+            is_visible = inp.is_visible()
+            accept = inp.get_attribute('accept') or ''
+            if is_visible or 'image' in accept.lower():
+                file_inputs.insert(0, inp)
+            else:
+                file_inputs.append(inp)
+        except:
+            file_inputs.append(inp)
+
     for i, inp in enumerate(file_inputs):
         try:
             inp.set_input_files(image_path, timeout=10000, force=True)
             uploaded = True
             update_job_progress(job_id, f"Image uploaded via direct file input #{i}")
+            page.wait_for_timeout(2000) # Give UI time to react
             break
         except Exception as e:
             print(f"Direct set_input_files on input #{i} failed: {e}")
@@ -1095,11 +1129,18 @@ def run_image_to_video_job_guts(page, job_id, model, aspect_ratio, aspect_select
     # Fallback: click elements that trigger file chooser
     if not uploaded:
         for upload_selector in [
+            '#upload-btn',
+            '.upload-trigger',
+            '.plus-icon-container',
             '.img-attach-cont',
             '.img-1-cont',
             '.plus-attach-img',
             '.attach-images',
             '[data-target]',
+            '.upload-btn',
+            '#image-upload-btn',
+            'button:has-text("Upload")',
+            'label:has-text("Upload")',
         ]:
             try:
                 btn = page.locator(upload_selector).first
@@ -1112,6 +1153,7 @@ def run_image_to_video_job_guts(page, job_id, model, aspect_ratio, aspect_select
                     file_chooser.set_files(image_path)
                     uploaded = True
                     update_job_progress(job_id, f"Image uploaded via clicking {upload_selector}")
+                    page.wait_for_timeout(2000)
                     break
             except Exception as e:
                 print(f"Upload via selector '{upload_selector}' failed: {e}")
@@ -1128,9 +1170,12 @@ def run_image_to_video_job_guts(page, job_id, model, aspect_ratio, aspect_select
 
             js_result = page.evaluate('''({b64, mime, name}) => {
                 try {
-                    const inputs = document.querySelectorAll('input[type="file"]');
+                    const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
                     if (inputs.length === 0) return "no-inputs";
-                    const inp = inputs[0];
+                    
+                    // Try to find the best input
+                    const inp = inputs.find(i => i.accept && i.accept.includes('image')) || inputs[0];
+                    
                     const byteStr = atob(b64);
                     const ab = new ArrayBuffer(byteStr.length);
                     const ia = new Uint8Array(ab);
@@ -1141,13 +1186,22 @@ def run_image_to_video_job_guts(page, job_id, model, aspect_ratio, aspect_select
                     const file = new File([blob], name, {type: mime});
                     const dt = new DataTransfer();
                     dt.items.add(file);
+                    
                     // Use native setter for React/Vue compatibility
                     const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
                         window.HTMLInputElement.prototype, 'files'
                     ).set;
-                    nativeInputValueSetter.call(inp, dt.files);
-                    inp.dispatchEvent(new Event('change', { bubbles: true }));
-                    inp.dispatchEvent(new Event('input', { bubbles: true }));
+                    
+                    // Try setting it for all inputs as a shotgun approach if we are desperate
+                    inputs.forEach(input => {
+                        try {
+                            nativeInputValueSetter.call(input, dt.files);
+                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                            input.dispatchEvent(new Event('input', { bubbles: true }));
+                            input.dispatchEvent(new Event('blur', { bubbles: true }));
+                        } catch(e) {}
+                    });
+                    
                     return "ok";
                 } catch(e) { return "error: " + e.message; }
             }''', {'b64': b64_data, 'mime': mime, 'name': file_name})
@@ -1155,6 +1209,7 @@ def run_image_to_video_job_guts(page, job_id, model, aspect_ratio, aspect_select
             if js_result == "ok":
                 uploaded = True
                 update_job_progress(job_id, "Image uploaded via JS")
+                page.wait_for_timeout(2000)
             else:
                 print(f"JS upload returned: {js_result}")
         except Exception as e:
@@ -1171,16 +1226,16 @@ def run_image_to_video_job_guts(page, job_id, model, aspect_ratio, aspect_select
     handle_crop_modal(page, job_id, aspect_select)
 
     update_job_progress(job_id, 'Inputting prompt text...')
-    # Select prompt textarea (with fallback to #fn__include_textarea)
-    prompt_selector = '#fn__include_textarea_img_video'
-    try:
-        page.wait_for_selector(prompt_selector, timeout=3000)
-    except Exception:
-        prompt_selector = '#fn__include_textarea'
+    # Select prompt textarea with multiple fallbacks
+    prompt_selector = None
+    for ps in ['#fn__include_textarea_img_video', '#fn__include_textarea', 'textarea[placeholder*="Enter prompt"]', 'textarea#prompt', '.prompt-input', 'textarea']:
         try:
-            page.wait_for_selector(prompt_selector, timeout=3000)
+            if page.locator(ps).count() > 0:
+                page.wait_for_selector(ps, timeout=3000)
+                prompt_selector = ps
+                break
         except Exception:
-            prompt_selector = None
+            pass
 
     if prompt_selector:
         update_job_progress(job_id, f"Inputting prompt text using selector {prompt_selector}...")
@@ -1229,16 +1284,16 @@ def run_image_to_video_job_guts(page, job_id, model, aspect_ratio, aspect_select
 
     dismiss_popup_if_needed(page)
     update_job_progress(job_id, 'Submitting specifications for rendering...')
-    # Select generate button (with fallback to #generate_it)
-    generate_selector = '#generate_it_img_video'
-    try:
-        page.wait_for_selector(generate_selector, timeout=3000)
-    except Exception:
-        generate_selector = '#generate_it'
+    # Select generate button with multiple fallbacks
+    generate_selector = None
+    for gs in ['#generate_it_img_video', '#generate_it', 'button:has-text("Generate")', 'button#generate-btn', 'button:has-text("Generate Video")', '.generate-btn', '#generate_btn']:
         try:
-            page.wait_for_selector(generate_selector, timeout=3000)
+            if page.locator(gs).count() > 0:
+                page.wait_for_selector(gs, timeout=3000)
+                generate_selector = gs
+                break
         except Exception:
-            generate_selector = None
+            pass
 
     if generate_selector:
         update_job_progress(job_id, f"Submitting specifications using selector {generate_selector}...")
